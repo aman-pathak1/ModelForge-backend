@@ -5,12 +5,14 @@ Senior ML Engineer Grade — Google Standards
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import pandas as pd
 import numpy as np
 import io
 import time
+import joblib
 import traceback
 
 # ── ML Libraries ─────────────────────────────────────────────────
@@ -77,6 +79,7 @@ def infer_task(series: pd.Series) -> str:
         return "binary_classification"
     return "multiclass_classification"
 
+
 def build_preprocessor(X: pd.DataFrame):
     num_cols = X.select_dtypes(include=[np.number]).columns.tolist()
     cat_cols = X.select_dtypes(exclude=[np.number]).columns.tolist()
@@ -102,6 +105,7 @@ def build_preprocessor(X: pd.DataFrame):
     preprocessor = ColumnTransformer(transformers, remainder="drop")
     return preprocessor, num_cols, cat_cols
 
+
 def get_classifiers(n_rows: int) -> Dict:
     models = {}
     if HAS_LGBM:
@@ -124,6 +128,7 @@ def get_classifiers(n_rows: int) -> Dict:
         models["KNeighborsClassifier"]   = KNeighborsClassifier(n_jobs=-1)
     return models
 
+
 def get_regressors(n_rows: int) -> Dict:
     models = {}
     if HAS_LGBM:
@@ -141,6 +146,7 @@ def get_regressors(n_rows: int) -> Dict:
         models["SVR"]                   = SVR()
     return models
 
+
 HYPERPARAM_GRIDS = {
     "LGBMClassifier":             {"model__num_leaves": [31, 63], "model__learning_rate": [0.05, 0.1]},
     "XGBClassifier":              {"model__max_depth": [4, 6], "model__learning_rate": [0.05, 0.1]},
@@ -157,13 +163,15 @@ HYPERPARAM_GRIDS = {
 def root():
     return {"status": "ModelForge API running", "version": "1.0.0"}
 
+
 @app.get("/health")
 def health():
     return {
         "status": "ok",
         "lgbm": HAS_LGBM,
-        "xgb": HAS_XGB,
+        "xgb":  HAS_XGB,
     }
+
 
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...), target: str = ""):
@@ -217,17 +225,21 @@ async def analyze(file: UploadFile = File(...), target: str = ""):
         y  = le.fit_transform(y.astype(str))
         classes = le.classes_.tolist()
     else:
-        y = pd.to_numeric(y, errors="coerce").fillna(y.median() if pd.to_numeric(y, errors="coerce").notna().any() else 0)
+        y = pd.to_numeric(y, errors="coerce").fillna(
+            y.median() if pd.to_numeric(y, errors="coerce").notna().any() else 0
+        )
         classes = []
 
     # ── 4. Preprocessor ───────────────────────────────────────────
     preprocessor, num_cols, cat_cols = build_preprocessor(X)
 
     # ── 5. CV Benchmark ───────────────────────────────────────────
-    models     = get_regressors(n_rows) if is_reg else get_classifiers(n_rows)
-    scoring    = "r2" if is_reg else ("roc_auc" if task_type == "binary_classification" else "accuracy")
-    cv_splitter = KFold(n_splits=CV_FOLDS, shuffle=True, random_state=42) if is_reg \
-                  else StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=42)
+    models      = get_regressors(n_rows) if is_reg else get_classifiers(n_rows)
+    scoring     = "r2" if is_reg else ("roc_auc" if task_type == "binary_classification" else "accuracy")
+    cv_splitter = (
+        KFold(n_splits=CV_FOLDS, shuffle=True, random_state=42) if is_reg
+        else StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=42)
+    )
 
     cv_results = []
     for name, model in models.items():
@@ -235,20 +247,20 @@ async def analyze(file: UploadFile = File(...), target: str = ""):
             pipe   = Pipeline([("pre", preprocessor), ("model", model)])
             scores = cross_val_score(pipe, X, y, cv=cv_splitter, scoring=scoring, n_jobs=-1)
             cv_results.append({
-                "name":     name,
-                "cv_mean":  round(float(scores.mean()), 4),
-                "cv_std":   round(float(scores.std()),  4),
+                "name":      name,
+                "cv_mean":   round(float(scores.mean()), 4),
+                "cv_std":    round(float(scores.std()),  4),
                 "cv_scores": [round(float(s), 4) for s in scores],
-                "scoring":  scoring,
+                "scoring":   scoring,
             })
         except Exception as ex:
             cv_results.append({
-                "name":    name,
-                "cv_mean": 0.0,
-                "cv_std":  0.0,
+                "name":      name,
+                "cv_mean":   0.0,
+                "cv_std":    0.0,
                 "cv_scores": [],
-                "error":   str(ex),
-                "scoring": scoring,
+                "error":     str(ex),
+                "scoring":   scoring,
             })
 
     cv_results.sort(key=lambda x: x["cv_mean"], reverse=True)
@@ -315,7 +327,7 @@ async def analyze(file: UploadFile = File(...), target: str = ""):
                     {
                         "feature":    str(fn),
                         "importance": round(float(imp / total), 4),
-                        "type": "numeric" if fn in num_cols else "categorical"
+                        "type": "numeric" if fn in num_cols else "categorical",
                     }
                     for fn, imp in zip(feat_names, importances)
                 ], key=lambda x: x["importance"], reverse=True)[:15]
@@ -352,25 +364,149 @@ async def analyze(file: UploadFile = File(...), target: str = ""):
     elapsed = round(time.time() - t0, 2)
 
     return {
-        "status":          "success",
-        "total_rows":      total_rows,
-        "trained_rows":    n_rows,
-        "n_features":      len(X.columns),
-        "target":          target,
-        "task_type":       task_type,
-        "classes":         classes,
-        "scoring_metric":  scoring,
-        "cv_results":      cv_results,
-        "tuned_results":   tuned_results,
+        "status":             "success",
+        "total_rows":         total_rows,
+        "trained_rows":       n_rows,
+        "n_features":         len(X.columns),
+        "target":             target,
+        "task_type":          task_type,
+        "classes":            classes,
+        "scoring_metric":     scoring,
+        "cv_results":         cv_results,
+        "tuned_results":      tuned_results,
         "feature_importance": feature_importance,
-        "test_metrics":    test_metrics,
-        "best_model":      tuned_results[0]["name"] if tuned_results else None,
-        "elapsed_seconds": elapsed,
-        "num_cols":        num_cols,
-        "cat_cols":        cat_cols,
+        "test_metrics":       test_metrics,
+        "best_model":         tuned_results[0]["name"] if tuned_results else None,
+        "elapsed_seconds":    elapsed,
+        "num_cols":           num_cols,
+        "cat_cols":           cat_cols,
     }
 
 
+# ══════════════════════════════════════════════════════════════════
+# NEW: /download_model — Train best model & return .pkl binary
+# ══════════════════════════════════════════════════════════════════
+@app.post("/download_model")
+async def download_model(file: UploadFile = File(...), target: str = ""):
+    """
+    Train the best available model on the uploaded CSV and return
+    a joblib-serialized sklearn pipeline as a downloadable .pkl file.
+
+    Steps:
+      1. Parse CSV (same caps as /analyze)
+      2. Detect task type
+      3. Build ColumnTransformer preprocessor
+      4. Train best model (LGBM > XGB > RandomForest fallback)
+      5. Serialize with joblib into memory buffer
+      6. Stream back as application/octet-stream
+    """
+    t0 = time.time()
+
+    # ── 1. Read CSV ───────────────────────────────────────────────
+    try:
+        content = await file.read()
+        df = pd.read_csv(io.BytesIO(content), low_memory=False)
+    except Exception as e:
+        raise HTTPException(400, f"CSV parse error: {e}")
+
+    if len(df) > MAX_ROWS:
+        df = df.sample(n=MAX_ROWS, random_state=42)
+
+    # ── 2. Target Column ──────────────────────────────────────────
+    if not target or target not in df.columns:
+        target = df.columns[-1]
+
+    X = df.drop(columns=[target])
+    y = df[target].copy()
+
+    # Drop high-cardinality object cols
+    for col in X.select_dtypes(include="object").columns:
+        if X[col].nunique() > MAX_CATS:
+            X = X.drop(columns=[col])
+
+    # ── 3. Task Detection ─────────────────────────────────────────
+    task_type = infer_task(y)
+    is_reg    = task_type == "regression"
+
+    le = None
+    if not is_reg:
+        le = LabelEncoder()
+        y  = le.fit_transform(y.astype(str))
+    else:
+        y = pd.to_numeric(y, errors="coerce").fillna(0)
+
+    # ── 4. Build Preprocessor ────────────────────────────────────
+    preprocessor, num_cols, cat_cols = build_preprocessor(X)
+
+    # ── 5. Select Best Available Model ───────────────────────────
+    # Priority: LGBM → XGBoost → RandomForest (most universally available)
+    if HAS_LGBM:
+        model = (
+            LGBMRegressor(n_estimators=200, random_state=42, n_jobs=-1, verbose=-1)
+            if is_reg else
+            LGBMClassifier(n_estimators=200, random_state=42, n_jobs=-1, verbose=-1)
+        )
+        model_name = "LGBMRegressor" if is_reg else "LGBMClassifier"
+    elif HAS_XGB:
+        model = (
+            XGBRegressor(n_estimators=200, random_state=42, n_jobs=-1, verbosity=0)
+            if is_reg else
+            XGBClassifier(n_estimators=200, random_state=42, n_jobs=-1, verbosity=0)
+        )
+        model_name = "XGBRegressor" if is_reg else "XGBClassifier"
+    else:
+        model = (
+            RandomForestRegressor(n_estimators=200, random_state=42, n_jobs=-1)
+            if is_reg else
+            RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
+        )
+        model_name = "RandomForestRegressor" if is_reg else "RandomForestClassifier"
+
+    # ── 6. Train on Full Data ─────────────────────────────────────
+    pipe = Pipeline([("pre", preprocessor), ("model", model)])
+    try:
+        pipe.fit(X, y)
+    except Exception as e:
+        raise HTTPException(500, f"Model training failed: {e}")
+
+    # ── 7. Serialize to Memory Buffer ────────────────────────────
+    # Pack pipeline + metadata together so the user can introspect it
+    bundle = {
+        "pipeline":   pipe,         # fitted sklearn Pipeline
+        "le":         le,           # LabelEncoder (None for regression)
+        "target":     target,
+        "task_type":  task_type,
+        "model_name": model_name,
+        "num_cols":   num_cols,
+        "cat_cols":   cat_cols,
+        "trained_rows": len(X),
+        "elapsed_seconds": round(time.time() - t0, 2),
+    }
+
+    buf = io.BytesIO()
+    joblib.dump(bundle, buf, compress=3)   # compress=3 → good size/speed balance
+    buf.seek(0)
+
+    # ── 8. Stream Response ────────────────────────────────────────
+    safe_target  = target.replace(" ", "_").replace("/", "-")[:30]
+    filename     = f"modelforge_{model_name}_{safe_target}.pkl"
+
+    return StreamingResponse(
+        buf,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Model-Name":        model_name,
+            "X-Task-Type":         task_type,
+            "X-Target":            target,
+            "X-Trained-Rows":      str(len(X)),
+        },
+    )
+
+
+# ══════════════════════════════════════════════════════════════════
+# /predict — Train on full data, predict single row
+# ══════════════════════════════════════════════════════════════════
 @app.post("/predict")
 async def predict_single(file: UploadFile = File(...), target: str = "", row_json: str = "{}"):
     """Train on full data, predict single row"""
@@ -398,17 +534,23 @@ async def predict_single(file: UploadFile = File(...), target: str = "", row_jso
 
     # Use best model — LGBM if available else RF
     if HAS_LGBM:
-        model = LGBMRegressor(n_estimators=100, random_state=42, verbose=-1) if is_reg \
-                else LGBMClassifier(n_estimators=100, random_state=42, verbose=-1)
+        model = (
+            LGBMRegressor(n_estimators=100, random_state=42, verbose=-1)
+            if is_reg else
+            LGBMClassifier(n_estimators=100, random_state=42, verbose=-1)
+        )
     else:
-        model = RandomForestRegressor(n_estimators=100, random_state=42) if is_reg \
-                else RandomForestClassifier(n_estimators=100, random_state=42)
+        model = (
+            RandomForestRegressor(n_estimators=100, random_state=42)
+            if is_reg else
+            RandomForestClassifier(n_estimators=100, random_state=42)
+        )
 
     pipe = Pipeline([("pre", preprocessor), ("model", model)])
     pipe.fit(X, y)
 
-    row_data  = json.loads(row_json)
-    row_df    = pd.DataFrame([row_data])
+    row_data = json.loads(row_json)
+    row_df   = pd.DataFrame([row_data])
 
     # Fill missing cols with mode/mean
     for col in X.columns:
@@ -429,8 +571,10 @@ async def predict_single(file: UploadFile = File(...), target: str = "", row_jso
         proba = {}
         if hasattr(pipe, "predict_proba"):
             probas = pipe.predict_proba(row_df)[0]
-            proba  = {le.inverse_transform([i])[0]: round(float(p), 4)
-                      for i, p in enumerate(probas)}
+            proba  = {
+                le.inverse_transform([i])[0]: round(float(p), 4)
+                for i, p in enumerate(probas)
+            }
         result = {"prediction": str(label), "probabilities": proba, "type": task_type}
 
     return result
