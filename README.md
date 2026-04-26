@@ -1,3 +1,14 @@
+---
+title: ModelForge Backend
+emoji: 🤖
+colorFrom: indigo
+colorTo: purple
+sdk: docker
+app_port: 7860
+pinned: false
+short_description: AutoML backend — FastAPI + sklearn + LightGBM + XGBoost
+---
+
 # ModelForge Backend
 
 ModelForge Backend is a server-side application designed to support an automated machine learning workflow. It allows users to upload datasets, process them, and run machine learning models with minimal manual intervention.
