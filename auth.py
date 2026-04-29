@@ -5,25 +5,44 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 import uuid
 
 from database import get_db
 from models import User
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Configuration
-SECRET_KEY = "your-secret-key-keep-it-safe" # In production, use an env var
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-keep-it-safe")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 router = APIRouter(prefix="/auth", tags=["auth"])
 
+# Email Configuration
+conf = ConnectionConfig(
+    MAIL_USERNAME = "your-email@gmail.com", # <--- EDIT THIS
+    MAIL_PASSWORD = "your-app-password",    # <--- EDIT THIS (App Password, not login password)
+    MAIL_FROM = "your-email@gmail.com",
+    MAIL_PORT = 587,
+    MAIL_SERVER = "smtp.gmail.com",
+    MAIL_STARTTLS = True,
+    MAIL_SSL_TLS = False,
+    USE_CREDENTIALS = True,
+    VALIDATE_CERTS = True
+)
+
 # Pydantic Models
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(..., min_length=8)
 
 class UserOut(BaseModel):
     id: str
@@ -79,24 +98,19 @@ def get_current_active_user(current_user: User = Depends(get_current_user)):
 
 # Endpoints
 @router.post("/signup", response_model=UserOut)
-def create_user(user: UserCreate, db: Session = Depends(get_db)):
+async def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
     
     hashed_password = get_password_hash(user.password)
-    db_user = User(email=user.email, hashed_password=hashed_password, verified=False)
-    db.add(db_user)
+    # Auto-verify for easier testing as requested
+    new_user = User(email=user.email, hashed_password=hashed_password, verified=True)
+    db.add(new_user)
     db.commit()
-    db.refresh(db_user)
+    db.refresh(new_user)
     
-    # Generate verification token
-    verification_token = create_access_token(data={"sub": user.email})
-    
-    # In a real app, send email here. We are mocking it:
-    print(f"\n[MOCK EMAIL] Verification Link for {user.email}: http://localhost:5173/verify?token={verification_token}\n")
-    
-    return db_user
+    return new_user
 
 @router.get("/verify")
 def verify_email(token: str, db: Session = Depends(get_db)):
