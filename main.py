@@ -15,6 +15,13 @@ import time
 import joblib
 import traceback
 
+from database import engine, Base
+from auth import router as auth_router
+from routers import router as tracking_router
+
+# Initialize Database
+Base.metadata.create_all(bind=engine)
+
 # ── ML Libraries ─────────────────────────────────────────────────
 from sklearn.model_selection import (
     cross_val_score, StratifiedKFold, KFold,
@@ -61,6 +68,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(auth_router)
+app.include_router(tracking_router)
 
 # ── Constants ─────────────────────────────────────────────────────
 MAX_ROWS       = 50_000   # cap for training speed
