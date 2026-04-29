@@ -42,7 +42,7 @@ conf = ConnectionConfig(
 # Pydantic Models
 class UserCreate(BaseModel):
     email: EmailStr
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=6)
 
 class UserOut(BaseModel):
     id: str
@@ -62,6 +62,24 @@ def verify_password(plain_password, hashed_password):
 
 def get_password_hash(password):
     return pwd_context.hash(password)
+
+def validate_password_complexity(password: str):
+    """
+    Validates that password has at least:
+    - 6 characters
+    - 1 special character
+    - 1 uppercase letter
+    - 1 number
+    """
+    if len(password) < 6:
+        return False, "Password must be at least 6 characters long"
+    if not any(char.isdigit() for char in password):
+        return False, "Password must contain at least one number"
+    if not any(char.isupper() for char in password):
+        return False, "Password must contain at least one uppercase letter"
+    if not any(not char.isalnum() for char in password):
+        return False, "Password must contain at least one special character"
+    return True, ""
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -102,6 +120,11 @@ async def create_user(user: UserCreate, db: Session = Depends(get_db)):
     db_user = db.query(User).filter(User.email == user.email).first()
     if db_user:
         raise HTTPException(status_code=400, detail="Email already registered")
+    
+    # Password complexity validation
+    is_valid, msg = validate_password_complexity(user.password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=msg)
     
     hashed_password = get_password_hash(user.password)
     # Auto-verify for easier testing as requested
