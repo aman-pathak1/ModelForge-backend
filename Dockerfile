@@ -2,14 +2,11 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-<<<<<<< HEAD
 # ── System dependencies for LightGBM (libgomp1) and XGBoost ──────
-=======
->>>>>>> 313846fba3a1ca89418213fd608070b76aece72e
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-        libgomp1 \
-        libgcc-s1 \
+    libgomp1 \
+    libgcc-s1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
