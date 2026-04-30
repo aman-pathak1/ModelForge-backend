@@ -4,6 +4,7 @@ Senior ML Engineer Grade — Google Standards
 """
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -12,13 +13,21 @@ import numpy as np
 import io
 import time
 import traceback
+import os
 
 from database import engine, Base
 from auth import router as auth_router
 from routers import router as tracking_router
 
-# Initialize Database
-Base.metadata.create_all(bind=engine)
+# ── Database Initialization ────────────────────────────────────────
+@app.on_event("startup")
+def on_startup():
+    try:
+        Base.metadata.create_all(bind=engine)
+        print("✅ Database initialized successfully")
+    except Exception as e:
+        print(f"❌ Database initialization failed: {e}")
+        # In production, we might want to fail fast or keep running if DB is optional
 
 # ── ML Libraries ─────────────────────────────────────────────────
 from sklearn.model_selection import (
@@ -448,13 +457,49 @@ async def predict_single(file: UploadFile = File(...), target: str = "", row_jso
     return result
 
 
-from fastapi.responses import FileResponse
-import os as _os
+
+
+@app.post("/download-model")
+async def download_model_post(file: UploadFile = File(...), target: str = ""):
+    """Train a model quickly and return the .pkl file"""
+    try:
+        content = await file.read()
+        df = pd.read_csv(io.BytesIO(content), low_memory=False)
+        
+        if not target or target not in df.columns:
+            target = df.columns[-1]
+            
+        X = df.drop(columns=[target])
+        y = df[target]
+        
+        # Simple fast training for download
+        preprocessor, _, _ = build_preprocessor(X)
+        task_type = infer_task(y)
+        
+        if task_type == "regression":
+            model = RandomForestRegressor(n_estimators=50, random_state=42, n_jobs=-1)
+        else:
+            model = RandomForestClassifier(n_estimators=50, random_state=42, n_jobs=-1)
+            
+        pipe = Pipeline([("pre", preprocessor), ("model", model)])
+        pipe.fit(X, y)
+        
+        path = "/tmp/download_model.pkl"
+        import joblib
+        joblib.dump(pipe, path)
+        
+        return FileResponse(
+            path,
+            filename=f"modelforge_{target}_model.pkl",
+            media_type="application/octet-stream"
+        )
+    except Exception as e:
+        raise HTTPException(500, f"Training failed: {e}")
 
 @app.get("/download-model")
-def download_model():
+def download_model_get():
     path = "/tmp/best_model.pkl"
-    if _os.path.exists(path):
+    if os.path.exists(path):
         return FileResponse(
             path,
             filename="modelforge_model.pkl",
