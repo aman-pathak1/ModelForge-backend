@@ -19,6 +19,16 @@ from database import engine, Base
 from auth import router as auth_router
 from routers import router as tracking_router
 
+app = FastAPI(title="ModelForge API", version="1.0.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # ── Database Initialization ────────────────────────────────────────
 @app.on_event("startup")
 def on_startup():
@@ -65,16 +75,6 @@ try:
     HAS_XGB = True
 except ImportError:
     HAS_XGB = False
-
-app = FastAPI(title="ModelForge API", version="1.0.0")
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 app.include_router(auth_router)
 app.include_router(tracking_router)
