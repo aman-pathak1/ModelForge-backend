@@ -41,6 +41,23 @@ class EDASummary(Base):
     distributions = Column(JSON)
     correlations = Column(JSON)
     key_insights = Column(JSON)
+    health_score = Column(Integer)  # Added health score
+    preprocessing_details = Column(JSON) # Imputation, Encoding etc.
 
     user = relationship("User", back_populates="eda_summaries")
     dataset = relationship("Dataset", back_populates="eda_summaries")
+
+class TrainedModel(Base):
+    __tablename__ = "trained_models"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"))
+    dataset_id = Column(String, ForeignKey("datasets.id"))
+    model_name = Column(String, nullable=False)
+    accuracy = Column(String)
+    task_type = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    user = relationship("User", back_populates="trained_models")
+
+User.trained_models = relationship("TrainedModel", back_populates="user")
